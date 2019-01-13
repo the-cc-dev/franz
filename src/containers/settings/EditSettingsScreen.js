@@ -7,12 +7,16 @@ import AppStore from '../../stores/AppStore';
 import SettingsStore from '../../stores/SettingsStore';
 import UserStore from '../../stores/UserStore';
 import Form from '../../lib/Form';
-import { APP_LOCALES } from '../../i18n/languages';
+import { APP_LOCALES, SPELLCHECKER_LOCALES } from '../../i18n/languages';
 import { gaPage } from '../../lib/analytics';
 import { DEFAULT_APP_SETTINGS } from '../../config';
+import { config as spellcheckerConfig } from '../../features/spellchecker';
+
+import { getSelectOptions } from '../../helpers/i18n-helpers';
 
 
 import EditSettingsForm from '../../components/settings/settings/EditSettingsForm';
+import ErrorBoundary from '../../components/util/ErrorBoundary';
 
 const messages = defineMessages({
   autoLaunchOnStart: {
@@ -39,6 +43,10 @@ const messages = defineMessages({
     id: 'settings.app.form.language',
     defaultMessage: '!!!Language',
   },
+  darkMode: {
+    id: 'settings.app.form.darkMode',
+    defaultMessage: '!!!Dark Mode',
+  },
   showDisabledServices: {
     id: 'settings.app.form.showDisabledServices',
     defaultMessage: '!!!Display disabled services tabs',
@@ -55,8 +63,8 @@ const messages = defineMessages({
     id: 'settings.app.form.enableGPUAcceleration',
     defaultMessage: '!!!Enable GPU Acceleration',
   },
-  spellcheckingLanguage: {
-    id: 'settings.app.form.spellcheckingLanguage',
+  spellcheckerLanguage: {
+    id: 'settings.app.form.spellcheckerLanguage',
     defaultMessage: '!!!Language for spell checking',
   },
   beta: {
@@ -65,8 +73,7 @@ const messages = defineMessages({
   },
 });
 
-@inject('stores', 'actions') @observer
-export default class EditSettingsScreen extends Component {
+export default @inject('stores', 'actions') @observer class EditSettingsScreen extends Component {
   static contextTypes = {
     intl: intlShape,
   };
@@ -91,8 +98,10 @@ export default class EditSettingsScreen extends Component {
         minimizeToSystemTray: settingsData.minimizeToSystemTray,
         enableGPUAcceleration: settingsData.enableGPUAcceleration,
         showDisabledServices: settingsData.showDisabledServices,
+        darkMode: settingsData.darkMode,
         showMessageBadgeWhenMuted: settingsData.showMessageBadgeWhenMuted,
         enableSpellchecking: settingsData.enableSpellchecking,
+        spellcheckerLanguage: settingsData.spellcheckerLanguage,
         beta: settingsData.beta, // we need this info in the main process as well
         locale: settingsData.locale, // we need this info in the main process as well
       },
@@ -110,12 +119,12 @@ export default class EditSettingsScreen extends Component {
     const { app, settings, user } = this.props.stores;
     const { intl } = this.context;
 
-    const locales = [];
-    Object.keys(APP_LOCALES).sort(Intl.Collator().compare).forEach((key) => {
-      locales.push({
-        value: key,
-        label: APP_LOCALES[key],
-      });
+    const locales = getSelectOptions({
+      locales: APP_LOCALES,
+    });
+
+    const spellcheckingLanguages = getSelectOptions({
+      locales: SPELLCHECKER_LOCALES,
     });
 
     const config = {
@@ -157,8 +166,19 @@ export default class EditSettingsScreen extends Component {
         },
         enableSpellchecking: {
           label: intl.formatMessage(messages.enableSpellchecking),
-          value: settings.all.app.enableSpellchecking,
-          default: DEFAULT_APP_SETTINGS.enableSpellchecking,
+          value: !this.props.stores.user.data.isPremium && spellcheckerConfig.isPremiumFeature ? false : settings.all.app.enableSpellchecking,
+          default: !this.props.stores.user.data.isPremium && spellcheckerConfig.isPremiumFeature ? false : DEFAULT_APP_SETTINGS.enableSpellchecking,
+        },
+        spellcheckerLanguage: {
+          label: intl.formatMessage(messages.spellcheckerLanguage),
+          value: settings.all.app.spellcheckerLanguage,
+          options: spellcheckingLanguages,
+          default: DEFAULT_APP_SETTINGS.spellcheckerLanguage,
+        },
+        darkMode: {
+          label: intl.formatMessage(messages.darkMode),
+          value: settings.all.app.darkMode,
+          default: DEFAULT_APP_SETTINGS.darkMode,
         },
         enableGPUAcceleration: {
           label: intl.formatMessage(messages.enableGPUAcceleration),
@@ -197,19 +217,22 @@ export default class EditSettingsScreen extends Component {
     const form = this.prepareForm();
 
     return (
-      <EditSettingsForm
-        form={form}
-        checkForUpdates={checkForUpdates}
-        installUpdate={installUpdate}
-        isCheckingForUpdates={updateStatus === updateStatusTypes.CHECKING}
-        isUpdateAvailable={updateStatus === updateStatusTypes.AVAILABLE}
-        noUpdateAvailable={updateStatus === updateStatusTypes.NOT_AVAILABLE}
-        updateIsReadyToInstall={updateStatus === updateStatusTypes.DOWNLOADED}
-        onSubmit={d => this.onSubmit(d)}
-        cacheSize={cacheSize}
-        isClearingAllCache={isClearingAllCache}
-        onClearAllCache={clearAllCache}
-      />
+      <ErrorBoundary>
+        <EditSettingsForm
+          form={form}
+          checkForUpdates={checkForUpdates}
+          installUpdate={installUpdate}
+          isCheckingForUpdates={updateStatus === updateStatusTypes.CHECKING}
+          isUpdateAvailable={updateStatus === updateStatusTypes.AVAILABLE}
+          noUpdateAvailable={updateStatus === updateStatusTypes.NOT_AVAILABLE}
+          updateIsReadyToInstall={updateStatus === updateStatusTypes.DOWNLOADED}
+          onSubmit={d => this.onSubmit(d)}
+          cacheSize={cacheSize}
+          isClearingAllCache={isClearingAllCache}
+          onClearAllCache={clearAllCache}
+          isSpellcheckerPremiumFeature={spellcheckerConfig.isPremiumFeature}
+        />
+      </ErrorBoundary>
     );
   }
 }

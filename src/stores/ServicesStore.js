@@ -1,4 +1,6 @@
-import { action, reaction, computed, observable } from 'mobx';
+import {
+  action, reaction, computed, observable,
+} from 'mobx';
 import { debounce, remove } from 'lodash';
 
 import Store from './lib/Store';
@@ -7,14 +9,19 @@ import CachedRequest from './lib/CachedRequest';
 import { matchRoute } from '../helpers/routing-helpers';
 import { gaEvent } from '../lib/analytics';
 
-const debug = require('debug')('ServiceStore');
+const debug = require('debug')('Franz:ServiceStore');
 
 export default class ServicesStore extends Store {
   @observable allServicesRequest = new CachedRequest(this.api.services, 'all');
+
   @observable createServiceRequest = new Request(this.api.services, 'create');
+
   @observable updateServiceRequest = new Request(this.api.services, 'update');
+
   @observable reorderServicesRequest = new Request(this.api.services, 'reorder');
+
   @observable deleteServiceRequest = new Request(this.api.services, 'delete');
+
   @observable clearCacheRequest = new Request(this.api.services, 'clearCache');
 
   @observable filterNeedle = null;
@@ -60,6 +67,7 @@ export default class ServicesStore extends Store {
       this._mapActiveServiceToServiceModelReaction.bind(this),
       this._saveActiveService.bind(this),
       this._logoutReaction.bind(this),
+      this._handleMuteSettings.bind(this),
     ]);
 
     // Just bind this
@@ -67,9 +75,14 @@ export default class ServicesStore extends Store {
   }
 
   setup() {
-    // Single key reactions
+    // Single key reactions for the sake of your CPU
     reaction(
-      () => this.stores.settings.all.app.enableSpellchecking,
+      () => this.stores.settings.app.enableSpellchecking,
+      () => this._shareSettingsWithServiceProcess(),
+    );
+
+    reaction(
+      () => this.stores.settings.app.spellcheckerLanguage,
       () => this._shareSettingsWithServiceProcess(),
     );
   }
@@ -93,7 +106,7 @@ export default class ServicesStore extends Store {
     return this.stores.settings.all.app.showDisabledServices ? this.all : this.enabled;
   }
 
-  // This is just used to avoid unnecessary rerendering of resource-heavy webviews 
+  // This is just used to avoid unnecessary rerendering of resource-heavy webviews
   @computed get allDisplayedUnordered() {
     const services = this.allServicesRequest.execute().result || [];
     return this.stores.settings.all.app.showDisabledServices ? services : services.filter(service => service.isEnabled);
@@ -143,11 +156,19 @@ export default class ServicesStore extends Store {
   // Actions
   @action async _createService({ recipeId, serviceData, redirect = true }) {
     const data = this._cleanUpTeamIdAndCustomUrl(recipeId, serviceData);
+
     const response = await this.createServiceRequest.execute(recipeId, data)._promise;
 
     this.allServicesRequest.patch((result) => {
       if (!result) return;
       result.push(response.data);
+    });
+
+    this.actions.settings.update({
+      type: 'proxy',
+      data: {
+        [`${response.data.id}`]: data.proxy,
+      },
     });
 
     this.actionStatus = response.status || [];
@@ -213,6 +234,21 @@ export default class ServicesStore extends Store {
 
     await request._promise;
     this.actionStatus = request.result.status;
+
+    if (service.isEnabled) {
+      this._sendIPCMessage({
+        serviceId,
+        channel: 'service-settings-update',
+        args: newData,
+      });
+    }
+
+    this.actions.settings.update({
+      type: 'proxy',
+      data: {
+        [`${serviceId}`]: data.proxy,
+      },
+    });
 
     if (redirect) {
       this.stores.router.push('/settings/services');
@@ -372,6 +408,18 @@ export default class ServicesStore extends Store {
       const url = args[0];
 
       this.actions.app.openExternalUrl({ url });
+    } else if (channel === 'set-service-spellchecker-language') {
+      if (!args) {
+        console.warn('Did not receive locale');
+      } else {
+        this.actions.service.updateService({
+          serviceId,
+          serviceData: {
+            spellcheckerLanguage: args[0] === 'reset' ? '' : args[0],
+          },
+          redirect: false,
+        });
+      }
     }
   }
 
@@ -411,6 +459,8 @@ export default class ServicesStore extends Store {
 
   @action _reload({ serviceId }) {
     const service = this.one(serviceId);
+    if (!service.isEnabled) return;
+
     service.resetMessageCount();
 
     service.webview.loadURL(service.url);
@@ -566,10 +616,25 @@ export default class ServicesStore extends Store {
     }
   }
 
+  _handleMuteSettings() {
+    const { enabled } = this;
+    const { isAppMuted } = this.stores.settings.app;
+
+    enabled.forEach((service) => {
+      const { isAttached } = service;
+      const isMuted = isAppMuted || service.isMuted;
+
+      if (isAttached) {
+        service.webview.setAudioMuted(isMuted);
+      }
+    });
+  }
+
   _shareSettingsWithServiceProcess() {
+    const settings = this.stores.settings.app;
     this.actions.service.sendIPCMessageToAllServices({
       channel: 'settings-update',
-      args: this.stores.settings.all.app,
+      args: settings,
     });
   }
 
@@ -594,7 +659,7 @@ export default class ServicesStore extends Store {
     const service = this.one(serviceId);
 
     if (service.webview) {
-      service.webview.send('initializeRecipe', service);
+      service.webview.send('initialize-recipe', service);
     }
   }
 
